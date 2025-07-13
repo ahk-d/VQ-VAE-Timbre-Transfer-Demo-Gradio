@@ -110,7 +110,6 @@ def preview_content_preset(preset_name):
     if preset_name and preset_name in INPUT_URLS:
         try:
             audio = load_audio_from_url(INPUT_URLS[preset_name], sr=exp.sr)
-            # Limit to 5 seconds for preview
             preview_duration = 5
             max_samples = int(preview_duration * exp.sr)
             if len(audio) > max_samples:
@@ -126,7 +125,6 @@ def preview_style_preset(preset_name):
     if preset_name and preset_name in INPUT_URLS:
         try:
             audio = load_audio_from_url(INPUT_URLS[preset_name], sr=exp.sr)
-            # Limit to 5 seconds for preview
             preview_duration = 5
             max_samples = int(preview_duration * exp.sr)
             if len(audio) > max_samples:
@@ -140,42 +138,40 @@ def preview_style_preset(preset_name):
 def process_timbre_transfer(content_file, content_preset, style_file, style_preset, max_duration=8):
     """Process timbre transfer with uploaded files or presets"""
     try:
-        # Load content audio (musical notes/melody to preserve)
+        # Load content audio
         if content_file is not None:
             a_content, _ = librosa.load(content_file, sr=exp.sr)
+        elif content_preset and content_preset in INPUT_URLS:
+            a_content = load_audio_from_url(INPUT_URLS[content_preset], sr=exp.sr)
         else:
-            if content_preset and content_preset in INPUT_URLS:
-                a_content = load_audio_from_url(INPUT_URLS[content_preset], sr=exp.sr)
-            else:
-                return None, "Please upload a content file or select a content preset"
+            return None, "Please upload a content file or select a content preset"
 
-        # Load style audio (timbre/texture to apply)
+        # Load style audio
         if style_file is not None:
             a_style, _ = librosa.load(style_file, sr=exp.sr)
+        elif style_preset and style_preset in INPUT_URLS:
+            a_style = load_audio_from_url(INPUT_URLS[style_preset], sr=exp.sr)
         else:
-            if style_preset and style_preset in INPUT_URLS:
-                a_style = load_audio_from_url(INPUT_URLS[style_preset], sr=exp.sr)
-            else:
-                return None, "Please upload a style file or select a style preset"
+            return None, "Please upload a style file or select a style preset"
 
-        # Limit duration to prevent memory issues
+        # Limit duration
         max_samples = int(max_duration * exp.sr)
         if len(a_content) > max_samples:
             a_content = a_content[:max_samples]
         if len(a_style) > max_samples:
             a_style = a_style[:max_samples]
 
-        # Preprocess: Convert audio to model input format
+        # Preprocess
         s_content = torch.as_tensor(exp.preprocess(a_content), device=exp.device)[None, :]
         s_style = torch.as_tensor(exp.preprocess(a_style), device=exp.device)[None, :]
         l_content, l_style = (torch.as_tensor([x.shape[2]], device=exp.device) for x in [s_content, s_style])
 
-        # Run model: Extract content features, extract style features, then recombine
+        # Run model
         with torch.no_grad():
             s_output = exp.model(input_c=s_content, input_s=s_style,
                                length_c=l_content, length_s=l_style)
 
-        # Postprocess: Convert model output back to audio waveform
+        # Postprocess
         a_output = exp.postprocess(s_output.cpu().numpy()[0])
 
         return (exp.sr, a_output), "Transfer completed successfully!"
@@ -187,9 +183,18 @@ def process_timbre_transfer(content_file, content_preset, style_file, style_pres
 with gr.Blocks(title="VQ-VAE Timbre Transfer", theme=gr.themes.Soft()) as demo:
     gr.Markdown("""
     # 🎵 VQ-VAE Timbre Transfer Demo
+    Transfer the timbre (tone/texture) from one audio source to another while preserving the musical content.
+    **Content**: Musical notes/melody that will be preserved  
+    **Style**: Instrument timbre/texture that will be applied
+    
+    ### How It Works:
+    The model separates musical content from timbre, then recombines them. Some instrument combinations work better than others due to harmonic compatibility and spectral characteristics.
+    ### Tips:
+    - Listen to preset previews to understand the source material
+    - Harmonic instruments (piano, guitar) often transfer well to each other
+    - Try different combinations - unexpected results can be musically interesting!
     """)
 
-    # Two-column layout for content and style inputs
     with gr.Row():
         with gr.Column():
             gr.Markdown("### 🎼 Content Audio")
@@ -199,7 +204,6 @@ with gr.Blocks(title="VQ-VAE Timbre Transfer", theme=gr.themes.Soft()) as demo:
                 label="Or choose preset",
                 value=""
             )
-            # Preview audio for content preset
             content_preview = gr.Audio(
                 label="🔊 Content Preview (5s)",
                 interactive=False,
@@ -214,24 +218,20 @@ with gr.Blocks(title="VQ-VAE Timbre Transfer", theme=gr.themes.Soft()) as demo:
                 label="Or choose preset",
                 value="Electric Guitar Close"
             )
-            # Preview audio for style preset
             style_preview = gr.Audio(
                 label="🔊 Style Preview (5s)",
                 interactive=False,
-                visible=True  # Visible by default since we have a default selection
+                visible=True
             )
 
-    # Duration control to balance quality vs processing time
     max_duration = gr.Slider(1, 15, value=8, step=1, label="Max Duration (seconds)")
-
     process_btn = gr.Button("🚀 Transfer Timbre", variant="primary", size="lg")
 
-    # Output section
     with gr.Row():
         output_audio = gr.Audio(label="🎵 Output Audio", interactive=False)
         status_msg = gr.Textbox(label="Status", interactive=False, max_lines=3)
 
-    # Hide previews when user uploads their own files
+    # Hide previews when user uploads files
     content_file.change(
         fn=lambda file: gr.update(visible=False) if file is not None else None,
         inputs=[content_file],
@@ -244,7 +244,7 @@ with gr.Blocks(title="VQ-VAE Timbre Transfer", theme=gr.themes.Soft()) as demo:
         outputs=[style_preview]
     )
 
-    # Connect preset selection to audio preview (only when no file uploaded)
+    # Show previews when presets are selected
     content_preset.change(
         fn=lambda preset, file: (
             preview_content_preset(preset) if preset and file is None else None,
@@ -263,13 +263,13 @@ with gr.Blocks(title="VQ-VAE Timbre Transfer", theme=gr.themes.Soft()) as demo:
         outputs=[style_preview, style_preview]
     )
 
-    # Load default style preview on startup
+    # Load default style preview
     demo.load(
         fn=lambda: preview_style_preset("Electric Guitar Close"),
         outputs=[style_preview]
     )
 
-    # Connect button click to processing function
+    # Process button
     process_btn.click(
         fn=process_timbre_transfer,
         inputs=[content_file, content_preset, style_file, style_preset, max_duration],
